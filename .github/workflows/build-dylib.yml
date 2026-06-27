@@ -1,0 +1,51 @@
+name: build-dylib
+# Build ONLY the YTMusicUltimate.dylib (the P9 fix) on a macOS runner.
+# No decrypted IPA needed — the tweak compiles against headers; we inject the dylib locally.
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [ main, "fix/**" ]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: recursive }
+
+      - name: Install Theos
+        run: |
+          set -e
+          git clone --recursive https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+          # macOS runners ship Xcode + iOS SDKs; theos uses them directly.
+
+      - name: Show available iOS SDKs
+        run: xcodebuild -showsdks | grep -i iphoneos || true
+
+      - name: Build the dylib
+        run: |
+          set -e
+          export THEOS="$HOME/theos"
+          # Pin to whatever iOS SDK the runner actually has (TARGET hardcodes 16.5).
+          perl -pi -e 's/iphone:clang:16\.5:13\.0/iphone:clang:latest:13.0/g' Makefile
+          make clean >/dev/null 2>&1 || true
+          make DEBUG=0 FINALPACKAGE=1 2>&1 | tee /tmp/build.log
+
+      - name: Locate built dylib
+        run: |
+          echo "=== dylibs produced ==="
+          find . "$HOME/theos" -name 'YTMusicUltimate.dylib' 2>/dev/null | tee /tmp/dylibs.txt
+          # verify the fix is in the binary
+          for f in $(cat /tmp/dylibs.txt); do
+            echo "--- $f ---"
+            (nm "$f" 2>/dev/null | grep -i contentPlayerResponse) || strings "$f" | grep -c contentPlayerResponse
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ytmu-fixed-dylib
+          path: |
+            .theos/obj/**/YTMusicUltimate.dylib
+            obj/**/YTMusicUltimate.dylib
+          if-no-files-found: error
