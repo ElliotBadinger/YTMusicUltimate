@@ -54,7 +54,8 @@ static BOOL YTMU(NSString *key) {
     YTMNowPlayingViewController *playingVC = (YTMNowPlayingViewController *)tapRecognizer.view._viewControllerForAncestor;
     YTMWatchViewController *watchVC = (YTMWatchViewController *)playingVC.parentViewController;
     YTPlayerViewController *playerVC = watchVC.playerViewController;
-    YTPlayerResponse *playerResponse = playerVC.playerResponse;
+    // 'playerResponse' was removed in YTMusic 9.17.2+; use 'contentPlayerResponse' instead.
+    YTPlayerResponse *playerResponse = playerVC.contentPlayerResponse;
 
     if (playerResponse) {
         YTMActionSheetController *sheetController = [%c(YTMActionSheetController) musicActionSheetController];
@@ -90,7 +91,7 @@ static BOOL YTMU(NSString *key) {
 
 %new
 - (void)downloadAudio:(YTPlayerViewController *)playerVC {
-    YTPlayerResponse *playerResponse = playerVC.playerResponse;
+    YTPlayerResponse *playerResponse = playerVC.contentPlayerResponse;
 
     NSString *title = [playerResponse.playerData.videoDetails.title stringByReplacingOccurrencesOfString:@"/" withString:@""];
     NSString *author = [playerResponse.playerData.videoDetails.author stringByReplacingOccurrencesOfString:@"/" withString:@""];
@@ -151,12 +152,24 @@ static BOOL YTMU(NSString *key) {
 
 %new
 - (void)downloadCoverImage:(YTPlayerViewController *)playerVC {
-    MBProgressHUD *hud = [MBProgressHUD showHUDAddedTo:[UIApplication sharedApplication].keyWindow animated:YES];
+    // Find the foreground active window (iOS 13+ multi-scene safe; falls back to keyWindow).
+    UIWindow *keyWin = nil;
+    for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
+        if ([scene isKindOfClass:[UIWindowScene class]] &&
+            scene.activationState == UISceneActivationStateForegroundActive) {
+            keyWin = ((UIWindowScene *)scene).keyWindow;
+            break;
+        }
+    }
+    if (!keyWin) {
+        keyWin = [UIApplication sharedApplication].keyWindow; // NOLINT deprecated
+    }
+    MBProgressHUD *hud = keyWin ? [MBProgressHUD showHUDAddedTo:keyWin animated:YES] : nil;
     dispatch_async(dispatch_get_main_queue(), ^{
         hud.mode = MBProgressHUDModeIndeterminate;
     });
 
-    YTPlayerResponse *playerResponse = playerVC.playerResponse;
+    YTPlayerResponse *playerResponse = playerVC.contentPlayerResponse;
 
     NSMutableArray *thumbnailsArray = playerResponse.playerData.videoDetails.thumbnail.thumbnailsArray;
     YTIThumbnailDetails_Thumbnail *thumbnail = [thumbnailsArray lastObject];
