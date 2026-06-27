@@ -1,0 +1,89 @@
+DOWNLOAD BUTTON CRASH FIX — YTMusicUltimate on YouTube Music 9.23.4
+====================================================================
+
+ROOT CAUSE (proven by binary analysis):
+----------------------------------------
+YTPlayerViewController.playerResponse was REMOVED in YouTube Music 9.17.2.
+The tweak's Downloading.x called this selector at 3 call sites, causing:
+
+  NSInvalidArgumentException: -[... playerResponse]: unrecognized selector sent to instance
+
+EVIDENCE FROM 9.23.4 BINARY:
+-----------------------------
+Binary: YouTubeMusic.app/YouTubeMusic (arm64, dyld4/chained-fixups format)
+Tool: custom Mach-O/dyld4 parser (ktool + handwritten Python)
+
+YTPlayerViewController methods (259 total, relevant):
+  - contentPlayerResponse       ← REPLACEMENT for dead playerResponse
+  - contentVideoID              ← still present
+  - currentVideoTotalMediaTime  ← still present
+
+YTPlayerResponse methods (36 total, relevant):
+  - playerData                  ← still present
+
+YTIPlayerResponse (protobuf-generated, confirmed via methname section):
+  - streamingData               ← still present
+  - videoDetails                ← still present (via T@"YTIVideoDetails",R,N,V_videoDetails)
+
+YTIStreamingData:
+  - hlsManifestURL              ← still present
+
+YTIThumbnailDetails:
+  - thumbnailsArray             ← still present
+
+SELECTOR MAPPING (OLD → NEW):
+------------------------------
+  playerVC.playerResponse  →  playerVC.contentPlayerResponse
+  (all other chained calls are unchanged: .playerData, .videoDetails, .streamingData,
+   .streamingData.hlsManifestURL, .videoDetails.thumbnail.thumbnailsArray)
+
+SOURCE CHANGES:
+---------------
+  Source/Headers/YTPlayerViewController.h:
+    - @property playerResponse → @property contentPlayerResponse
+
+  Source/Downloading.x:
+    - All 3 call sites: playerVC.playerResponse → playerVC.contentPlayerResponse
+    - downloadCoverImage: [UIApplication sharedApplication].keyWindow replaced with
+      connectedScenes-based lookup (iOS 13+ multi-scene safe, with keyWindow fallback)
+
+BINARY PATCH (for the prebuilt dylib, since no Theos/iOS SDK on this Linux box):
+----------------------------------------------------------------------------------
+  File: YTMusicUltimate.dylib (arm64, in IPA Frameworks/)
+  
+  1. Written "contentPlayerResponse\0" (22 bytes) at file offset 0xe03e10
+     (in __TEXT.__const section, previously-zero padding; 4102-byte null run available)
+  
+  2. Updated __objc_selrefs[287] at file offset 0xfff768:
+     OLD: 0xc5c17b (→ "playerResponse" in __objc_methname)
+     NEW: 0xe03e10 (→ "contentPlayerResponse" in __TEXT.__const)
+  
+  File size: 18078032 bytes (UNCHANGED)
+  Old playerResponse string at 0xc5c17b: orphaned (no longer referenced by selrefs)
+  
+  This single selref patch fixes all 3 call sites since ObjC uses the selref table
+  for all message sends to the same selector name.
+
+KEYWINDOW:
+----------
+  [UIApplication sharedApplication].keyWindow is deprecated in iOS 15+ but does NOT
+  crash — nil message sends in ObjC are NOPs. Source updated to use connectedScenes
+  for a proper multi-scene-safe lookup. The existing binary still uses keyWindow
+  (non-crashing in foreground use; proper fix requires rebuild with Theos/iOS SDK).
+
+ARTIFACTS:
+----------
+  Fixed unsigned IPA:  ~/ios-metrolist/ipas/ytmusicultimate-fixed.ipa
+  Fixed signed IPA:    ~/ios-metrolist/catapult-build/out/ytmu-fixed-signed.ipa
+  Install script:      ~/ios-metrolist/install-ytmu-fixed.sh
+  Source branch:       fix/download-ios26 (commit 978e6f1)
+
+VALIDATION PERFORMED:
+---------------------
+  ✓ Binary dump confirms contentPlayerResponse exists on YTPlayerViewController in 9.23.4
+  ✓ Binary dump confirms all chained selectors (.playerData, .videoDetails, etc.) still exist
+  ✓ Patch verification: contentPlayerResponse string at 0xe03e10 in signed IPA
+  ✓ Patch verification: selref at 0xfff768 points to 0xe03e10 in signed IPA
+  ✗ On-device validation NOT performed: iPhone (UDID 00008110-001604A41E28201E)
+    not connected via USB at time of patching. Run install-ytmu-fixed.sh with
+    iPhone connected to complete E2E validation.
