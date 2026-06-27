@@ -1,0 +1,50 @@
+workflows:
+  theos-dylib-build:
+    name: "YTMusicUltimate Theos dylib (P9 fix)"
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      xcode: "16.2"
+    scripts:
+      - name: Install Theos
+        script: |
+          set -e
+          git clone --recursive https://github.com/theos/theos.git "$HOME/theos"
+
+      - name: Show available iOS SDKs
+        script: |
+          xcodebuild -showsdks | grep -i iphoneos || true
+
+      - name: Build the dylib
+        script: |
+          set -e
+          export THEOS="$HOME/theos"
+          # Pin Makefile TARGET to whatever SDK the runner ships (avoids "SDK 16.5 not found")
+          perl -pi -e 's/iphone:clang:16\.5:13\.0/iphone:clang:latest:13.0/g' Makefile
+          make clean >/dev/null 2>&1 || true
+          make DEBUG=0 FINALPACKAGE=1 2>&1 | tee /tmp/build.log
+
+      - name: Locate + verify dylib (P9 selector check)
+        script: |
+          set -e
+          mkdir -p /tmp/artifacts
+          find . "$HOME/theos" -name 'YTMusicUltimate.dylib' 2>/dev/null | tee /tmp/dylibs.txt
+          test -s /tmp/dylibs.txt || { echo "NO DYLIB PRODUCED"; exit 1; }
+          for f in $(cat /tmp/dylibs.txt); do
+            echo "--- $f ---"
+            cp "$f" /tmp/artifacts/
+            echo "contentPlayerResponse (fixed) count: $(strings "$f" | grep -c contentPlayerResponse || true)"
+            echo "playerResponse        (buggy) count:  $(strings "$f" | grep -cx playerResponse || true)"
+          done
+          echo "SELECTOR CHECK: $(strings /tmp/artifacts/YTMusicUltimate.dylib | grep -c contentPlayerResponse) contentPlayerResponse hit(s)"
+          # Fail the build if the fix selector is absent
+          strings /tmp/artifacts/YTMusicUltimate.dylib | grep -q contentPlayerResponse || { echo "FAIL: contentPlayerResponse not in dylib"; exit 1; }
+          echo "PASS: contentPlayerResponse confirmed in dylib"
+
+      - name: Copy build log
+        script: |
+          cp /tmp/build.log /tmp/artifacts/build.log || true
+
+    artifacts:
+      - /tmp/artifacts/YTMusicUltimate.dylib
+      - /tmp/artifacts/build.log
