@@ -157,12 +157,22 @@ static BOOL YTMU(NSString *key) {
     for (UIScene *scene in [UIApplication sharedApplication].connectedScenes) {
         if ([scene isKindOfClass:[UIWindowScene class]] &&
             scene.activationState == UISceneActivationStateForegroundActive) {
-            keyWin = ((UIWindowScene *)scene).keyWindow;
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+            if (@available(iOS 15.0, *)) {
+                keyWin = ((UIWindowScene *)scene).keyWindow;
+            } else {
+                keyWin = ((UIWindowScene *)scene).windows.firstObject;
+            }
+#pragma clang diagnostic pop
             break;
         }
     }
     if (!keyWin) {
-        keyWin = [UIApplication sharedApplication].keyWindow; // NOLINT deprecated
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        keyWin = [UIApplication sharedApplication].keyWindow;
+#pragma clang diagnostic pop
     }
     MBProgressHUD *hud = keyWin ? [MBProgressHUD showHUDAddedTo:keyWin animated:YES] : nil;
     dispatch_async(dispatch_get_main_queue(), ^{

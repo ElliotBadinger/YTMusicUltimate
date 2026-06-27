@@ -22,7 +22,7 @@ workflows:
           # Pin Makefile TARGET to whatever SDK the runner ships (avoids "SDK 16.5 not found")
           perl -pi -e 's/iphone:clang:16\.5:13\.0/iphone:clang:latest:13.0/g' Makefile
           make clean >/dev/null 2>&1 || true
-          make DEBUG=0 FINALPACKAGE=1 2>&1 | tee /tmp/build.log
+          make DEBUG=0 FINALPACKAGE=1 2>&1 | tee /tmp/build.log; exit ${PIPESTATUS[0]}
 
       - name: Locate + verify dylib (P9 selector check)
         script: |
