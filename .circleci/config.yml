@@ -1,0 +1,60 @@
+version: 2.1
+
+# Build ONLY the YTMusicUltimate.dylib (the P9 download-crash fix) on a real macOS
+# runner. CircleCI's macOS images ship Xcode + iOS SDKs, so theos compiles directly.
+# This sidesteps the GitHub Actions billing lock (CircleCI runs on its own infra).
+
+jobs:
+  build-dylib:
+    macos:
+      xcode: "16.2.0"
+    resource_class: macos.m1.medium.gen1
+    steps:
+      - checkout
+
+      - run:
+          name: Install Theos
+          command: |
+            set -e
+            git clone --recursive https://github.com/theos/theos.git "$HOME/theos"
+
+      - run:
+          name: Show available iOS SDKs
+          command: xcodebuild -showsdks | grep -i iphoneos || true
+
+      - run:
+          name: Build the dylib
+          command: |
+            set -e
+            export THEOS="$HOME/theos"
+            # TARGET hardcodes SDK 16.5; pin to whatever the runner actually ships.
+            perl -pi -e 's/iphone:clang:16\.5:13\.0/iphone:clang:latest:13.0/g' Makefile
+            make clean >/dev/null 2>&1 || true
+            make DEBUG=0 FINALPACKAGE=1 2>&1 | tee /tmp/build.log
+
+      - run:
+          name: Locate + verify dylib (P9 selector)
+          command: |
+            set -e
+            mkdir -p /tmp/artifacts
+            find . "$HOME/theos" -name 'YTMusicUltimate.dylib' 2>/dev/null | tee /tmp/dylibs.txt
+            test -s /tmp/dylibs.txt || { echo "NO DYLIB PRODUCED"; exit 1; }
+            for f in $(cat /tmp/dylibs.txt); do
+              echo "--- $f ---"
+              cp "$f" /tmp/artifacts/
+              echo "contentPlayerResponse (live/fixed) count: $(strings "$f" | grep -c contentPlayerResponse || true)"
+              echo "playerResponse        (dead/buggy) count: $(strings "$f" | grep -cx playerResponse || true)"
+            done
+
+      - store_artifacts:
+          path: /tmp/artifacts
+          destination: dylib
+
+      - store_artifacts:
+          path: /tmp/build.log
+          destination: build.log
+
+workflows:
+  build:
+    jobs:
+      - build-dylib
