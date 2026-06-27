@@ -6,10 +6,18 @@ workflows:
     environment:
       xcode: "16.2"
     scripts:
-      - name: Install Theos
+      - name: Install Theos + ldid
         script: |
           set -e
           git clone --recursive https://github.com/theos/theos.git "$HOME/theos"
+          # Install ldid (Theos signing tool) - required for dylib signing step
+          brew install ldid 2>&1 || true
+          # Fallback: grab ldid binary directly from Procursus if brew fails
+          if ! command -v ldid &>/dev/null; then
+            curl -L "https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_macosx_arm64" \
+              -o /usr/local/bin/ldid && chmod +x /usr/local/bin/ldid || true
+          fi
+          ldid 2>&1 | head -2 || echo "ldid available: $(which ldid 2>/dev/null || echo 'NOT FOUND')"
 
       - name: Show available iOS SDKs
         script: |
@@ -28,14 +36,15 @@ workflows:
         script: |
           set -e
           mkdir -p /tmp/artifacts
-          find . "$HOME/theos" -name 'YTMusicUltimate.dylib' 2>/dev/null | tee /tmp/dylibs.txt
+          # Theos outputs final dylib to .theos/obj/ (signed) or packages/
+          find . -name 'YTMusicUltimate.dylib' 2>/dev/null | tee /tmp/dylibs.txt
           test -s /tmp/dylibs.txt || { echo "NO DYLIB PRODUCED"; exit 1; }
-          for f in $(cat /tmp/dylibs.txt); do
-            echo "--- $f ---"
-            cp "$f" /tmp/artifacts/
-            echo "contentPlayerResponse (fixed) count: $(strings "$f" | grep -c contentPlayerResponse || true)"
-            echo "playerResponse        (buggy) count:  $(strings "$f" | grep -cx playerResponse || true)"
-          done
+          # Use the first found (prefer packages/ over obj/ if both present)
+          DYLIB=$(grep -E 'packages|\.dylib$' /tmp/dylibs.txt | head -1 || head -1 /tmp/dylibs.txt)
+          cp "$DYLIB" /tmp/artifacts/YTMusicUltimate.dylib
+          echo "Using dylib: $DYLIB ($(du -h "$DYLIB" | cut -f1))"
+          echo "contentPlayerResponse (fixed) count: $(strings /tmp/artifacts/YTMusicUltimate.dylib | grep -c contentPlayerResponse || true)"
+          echo "playerResponse        (buggy) count:  $(strings /tmp/artifacts/YTMusicUltimate.dylib | grep -cx playerResponse || true)"
           echo "SELECTOR CHECK: $(strings /tmp/artifacts/YTMusicUltimate.dylib | grep -c contentPlayerResponse) contentPlayerResponse hit(s)"
           # Fail the build if the fix selector is absent
           strings /tmp/artifacts/YTMusicUltimate.dylib | grep -q contentPlayerResponse || { echo "FAIL: contentPlayerResponse not in dylib"; exit 1; }
